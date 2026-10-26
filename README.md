@@ -25,7 +25,7 @@ code path.
 | Boot | Verified: BIOS -> eye-catcher -> title -> character select -> match |
 | Program | De-protected "kof2000n" layout, 1 MB fixed + 4 MB banked |
 | Graphics | NEO-CMC50 C-ROM + 512 KB S-ROM decryption; banked fixed layer; verified in screenshots |
-| Audio | NEO-CMC50 M1 decryption byte-exact; boot/title/select audio works. **Known issue:** stage/match BGM and SFX go silent (see Known issues). |
+| Audio | NEO-CMC50 M1 decryption byte-exact; boot, title, select and match BGM/SFX verified non-silent |
 | Native recompilation | 40,194 entry points; 2,465,472 native blocks, 76 interpreted instructions, 0 uncovered entry points |
 | `--verify` | 2,465,444 blocks checked, 0 mismatches |
 | MVS watchdog | Implemented as a generic toolkit fix (KOF2000's copy protection waits for it) |
@@ -38,14 +38,9 @@ recompiler cannot seed them.
 
 ## Known issues
 
-- **Stage/match audio is silent.** Boot, title and character-select audio play,
-  but when a match starts the M1 driver stops draining its event/command
-  queues and gets stuck in the sequence player (the ADPCM/FM registers are
-  left cleared). The CMC50 M1 data is
-  byte-exact, the Z80 bank base matches MAME, and forced FM/ADPCM key-ons prove
-  the YM2610/V-ROM path works. The remaining fault is in the driver's
-  command/sequence state, not the decryption or the synthesizer. Visuals and
-  gameplay are unaffected.
+None currently known for the scripted session. The match audio path is verified
+against MAME's Z80 memory state: the M1 command/event queues stay drained and
+the BGM sequence pointer advances through the song.
 
 ## How it works
 

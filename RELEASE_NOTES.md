@@ -11,7 +11,7 @@ Built and run with the Asian/European MVS BIOS (`sp-s2.sp1`):
 - Boot: BIOS -> eye-catcher -> title -> character select -> match.
 - 40,194 entry points; 2,465,472 native blocks, 76 interpreted instructions, 0 uncovered entry points in the scripted session.
 - `--verify`: 2,465,444 blocks checked, 0 mismatches.
-- Audio: NEO-CMC50 M1 decryption byte-exact against the decrypted oracle; stereo output non-silent.
+- Audio: NEO-CMC50 M1 decryption byte-exact; full BGM/SFX verified from boot through the match.
 - Windows x64 (MSVC) and Linux x86_64 (gcc) builds.
 
 The 76 interpreted instructions are a routine the game copies into work RAM and calls there; they are not reachable as ROM entry points.
@@ -20,13 +20,16 @@ The 76 interpreted instructions are a routine the game copies into work RAM and 
 
 - MVS watchdog: KOF2000's copy protection waits for the board reset during a delay loop.
 - Banked 512 KB fixed layer (NEO-CMC50): the top tile-code bits come from VRAM `$7500`.
-- Z80 M-ROM bank base correction (`0x10000 + ...`, as in MAME's `init_audio`).
 
 The changes are in `patches/neogeorecomp-kof2000.patch` and are applied to the pinned toolkit submodule by `setup.sh`.
 
-## Known issue
+## Audio
 
-- **Stage/match audio is silent.** Boot, title and character-select audio play, but when a match starts the M1 driver stops draining its event/command queues and gets stuck in the sequence player (the ADPCM/FM registers are left cleared). The CMC50 M1 data is byte-exact, the Z80 bank base matches MAME, and forced key-ons prove the YM2610/V-ROM path works; the remaining fault is in the driver's command/sequence state. Visuals and gameplay are unaffected.
+The M1 driver's banked M-ROM reads now use the ROM's page layout directly. The
+song tables at `$8CC1`/`$C5BE` and their sequences are read from the same pages
+as MAME, the command/event queues stay drained, and the BGM plays through the
+match. No audio-specific patch hunk is needed; the correct read path is the
+toolkit's default one.
 
 ## Build
 

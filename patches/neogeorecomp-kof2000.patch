@@ -70,31 +70,6 @@ index 1ec5485..1be02ae 100644
  } ng_game_t;
  
  /* Controller state for one frame. Bits are active-high here; io.c inverts. */
-diff --git a/src/audio.c b/src/audio.c
-index ad2d90d..ede8c31 100644
---- a/src/audio.c
-+++ b/src/audio.c
-@@ -126,11 +126,16 @@ static uint8_t z_read(void *u, uint16_t a) {
-     size_t size = rom_size();
-     if (a < 0x8000) return r[a % size];
-     if (a >= 0xF800) return s_ram[a & 0x7FF];
-+    /* MAME's init_audio(): bank entry b lives at
-+     * 0x10000 + ((b << (11 + window)) & ((size - 0x10000 - 1) & 0x3FFFF)).
-+     * The 0x10000 base skips the fixed 64 KB at the bottom of the M ROM. */
-+    static const uint32_t win_mask[4] = {0x7FF, 0xFFF, 0x1FFF, 0x3FFF};
-+    uint32_t reg_mask = size > 0x10000 ? ((uint32_t)(size - 0x10000 - 1) & 0x3FFFF) : 0;
-     uint32_t off;
--    if (a >= 0xF000) off = s_bank[0] + (a & 0x7FF);
--    else if (a >= 0xE000) off = s_bank[1] + (a & 0xFFF);
--    else if (a >= 0xC000) off = s_bank[2] + (a & 0x1FFF);
--    else off = s_bank[3] + (a & 0x3FFF);
-+    if (a >= 0xF000) off = 0x10000 + ((s_bank[0] & reg_mask) + (a & win_mask[0]));
-+    else if (a >= 0xE000) off = 0x10000 + ((s_bank[1] & reg_mask) + (a & win_mask[1]));
-+    else if (a >= 0xC000) off = 0x10000 + ((s_bank[2] & reg_mask) + (a & win_mask[2]));
-+    else off = 0x10000 + ((s_bank[3] & reg_mask) + (a & win_mask[3]));
-     return r[off % size];
- }
- 
 diff --git a/src/io.c b/src/io.c
 index dd74dba..81abba9 100644
 --- a/src/io.c
