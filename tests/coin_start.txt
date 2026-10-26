@@ -1,0 +1,24 @@
+# Insert a coin once the attract loop is running, then start a 1P game and
+# pick a team. Frame numbers are 59.19 Hz video frames from power-on.
+900 coin
+1000 start
+# character select: pick four fighters, then confirm the order
+1300 a
+1400 right
+1450 a
+1550 right
+1600 a
+1700 right
+1750 a
+1900 a
+2000 a
+2100 a
+2200 a
+# opening match: walk in and throw a few attacks
+2400-2700 right
+2500 a
+2550 b
+2600 c
+2700-3000 left
+2800 a
+2900 c

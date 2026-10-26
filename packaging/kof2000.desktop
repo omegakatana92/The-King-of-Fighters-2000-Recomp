@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=The King of Fighters 2000 (recompiled)
+Comment=Native static recompilation; requires your own ROM dump
+Exec=KOF2000
+Icon=kof2000
+Categories=Game;ArcadeGame;
+Terminal=false

@@ -1,0 +1,240 @@
+diff --git a/docs/hardware-notes.md b/docs/hardware-notes.md
+index 1e92afb..5201059 100644
+--- a/docs/hardware-notes.md
++++ b/docs/hardware-notes.md
+@@ -40,6 +40,18 @@ When `0 - dst - X` is zero, NBCD clears C/X/V and leaves the destination untouch
+ 
+ The BIOS unlocks backup RAM, writes a few bytes and locks it again inside one routine. Anything that caches "is this page read-only" across a block is wrong. The first version of `--verify` did, and reported false mismatches until it logged every data read.
+ 
++### The MVS watchdog is part of the boot protocol (KOF2000)
++
++**Symptom:** KOF2000 reaches the red "THIS ROM CARTRIDGE IS FOR USE WITH ORIGINAL SNK BOARDS ONLY" screen and stays there forever, with the 68k spinning in a watchdog-kick loop.
++
++**Cause:** the cart's protection check clears a delay loop of 200,000 iterations and *expects the watchdog to reset the board* before it finishes. If the reset does not happen, the game writes `1` to backup RAM `$D00100` (the "protection failed" flag) and its demo handler shows the warning and halts.
++
++**Fix:** model the watchdog. Odd writes in `$300000-$31FFFF` reload a 3,244,030-master-clock (24 MHz) timer, i.e. 1,622,015 68000 clocks; expiry resets the board — 68000 vectors, bus banking, LSPC, and audio — but leaves work and backup RAM intact, as the battery-backed parts survive on hardware. The timing is MAME's `WATCHDOG_TIMER(...).set_time(attotime::from_ticks(3244030, 24000000))`.
++
++### Later carts bank the fixed layer
++
++An S ROM larger than 128 KB cannot fit the 12 tile-code bits in a fix-map entry. KOF2000's NEO-CMC50 takes the top two bits from a VRAM block at `$7500`, six columns per 16-bit word, inverted. `video.c` applies this only when the cart selected a >128 KB S ROM and `ng_game_t::fix_bank_type` says which layout to use, so 128 KB carts (Metal Slug, Iron Clad) keep the plain path.
++
+ ## Neo Geo: from references
+ 
+ Implemented from the documentation. Metal Slug boots, renders and plays correctly with all of it, but none of it was found by watching something break.
+@@ -68,6 +80,8 @@ After a `VRAMRW` write, the address advances by `VRAMMOD` but keeps bit 15: `add
+ 
+ `in a,($08)` selects a bank from the value of A, which is on the upper address lines during the I/O cycle. `in r,(c)` uses B instead. The Z80 core passes only the low byte, so `audio.c` recovers the upper byte from the opcode just executed.
+ 
++The bank base is not zero: each entry in the M ROM is at `0x10000 + ((bank << (11 + window)) & ((size - 0x10000 - 1) & 0x3FFFF))`, as in MAME's `init_audio`. The first 64 KB of the M ROM stays at `$0000-$7FFF`; skipping that base makes the banked windows read the wrong half of the driver.
++
+ ### Sprite rendering is per scanline, from the L0 ROM
+ 
+ Vertical shrink is not a scale factor. For each screen line, `000-lo.lo[(shrink << 8) | line]` gives the tile row and line to fetch. A height of 32 tiles draws the upper 16 and the mirrored lower 16, and 33 or more repeats the shrunk sprite down the screen. Horizontal shrink drops fixed pixels per the 16×16 table in `video.c`. Sticky sprites take the previous sprite's Y, height and vertical shrink, and sit at its X plus its width.
+diff --git a/docs/porting-a-game.md b/docs/porting-a-game.md
+index 0ad4ca4..3b1bf80 100644
+--- a/docs/porting-a-game.md
++++ b/docs/porting-a-game.md
+@@ -39,6 +39,8 @@ const ng_game_t k_mslug = {
+ 
+ Check the layout by looking for the `NEO-GEO` signature at `$100` of the fixed bank.
+ 
++Carts whose S ROM is larger than 128 KB bank the fixed layer (KOF2000 is the common case). Set `.fix_bank_type = NG_FIX_BANK_KOF2000`; leave it zero otherwise. The runtime only applies the extra tile-code bits when the S ROM is actually larger than 128 KB.
++
+ ## 3. Run it interpreted first
+ 
+ Build without `YOURGAME_ROM_DIR` (or run with `--interp`) and play headless:
+diff --git a/include/neogeorecomp/neogeo.h b/include/neogeorecomp/neogeo.h
+index 1ec5485..1be02ae 100644
+--- a/include/neogeorecomp/neogeo.h
++++ b/include/neogeorecomp/neogeo.h
+@@ -38,6 +38,14 @@ typedef struct {
+ 
+ #define NG_MAX_PARTS 8
+ 
++/* Some late carts have an S ROM larger than the 128 KB the fixed layer can
++ * address directly.  The two extra code bits come from VRAM instead; which
++ * VRAM words hold them differs per board, hence the per-game selector. */
++enum {
++    NG_FIX_BANK_NONE = 0,      /* plain 128 KB (or smaller) S ROM */
++    NG_FIX_BANK_KOF2000 = 1,   /* KOF2000: 512 KB S ROM */
++};
++
+ typedef struct {
+     const char   *name;               /* short name, e.g. "mslug" */
+     const char   *title;              /* window title */
+@@ -48,6 +56,7 @@ typedef struct {
+     const char   *srom;
+     const char   *m1;
+     const char   *vrom[NG_MAX_PARTS];
++    int           fix_bank_type;      /* NG_FIX_BANK_*, 0 if unused */
+ } ng_game_t;
+ 
+ /* Controller state for one frame. Bits are active-high here; io.c inverts. */
+diff --git a/src/audio.c b/src/audio.c
+index ad2d90d..71340f0 100644
+--- a/src/audio.c
++++ b/src/audio.c
+@@ -126,11 +126,16 @@ static uint8_t z_read(void *u, uint16_t a) {
+     size_t size = rom_size();
+     if (a < 0x8000) return r[a % size];
+     if (a >= 0xF800) return s_ram[a & 0x7FF];
++    /* MAME's init_audio(): bank entry b lives at
++     * 0x10000 + ((b << (11 + window)) & ((size - 0x10000 - 1) & 0x3FFFF)).
++     * The 0x10000 base skips the fixed 64 KB at the bottom of the M1. */
++    static const uint32_t win_mask[4] = {0x7FF, 0xFFF, 0x1FFF, 0x3FFF};
++    uint32_t reg_mask = size > 0x10000 ? ((uint32_t)(size - 0x10000 - 1) & 0x3FFFF) : 0;
+     uint32_t off;
+-    if (a >= 0xF000) off = s_bank[0] + (a & 0x7FF);
+-    else if (a >= 0xE000) off = s_bank[1] + (a & 0xFFF);
+-    else if (a >= 0xC000) off = s_bank[2] + (a & 0x1FFF);
+-    else off = s_bank[3] + (a & 0x3FFF);
++    if (a >= 0xF000) off = 0x10000 + ((s_bank[0] & reg_mask) + (a & win_mask[0]));
++    else if (a >= 0xE000) off = 0x10000 + ((s_bank[1] & reg_mask) + (a & win_mask[1]));
++    else if (a >= 0xC000) off = 0x10000 + ((s_bank[2] & reg_mask) + (a & win_mask[2]));
++    else off = 0x10000 + ((s_bank[3] & reg_mask) + (a & win_mask[3]));
+     return r[off % size];
+ }
+ 
+diff --git a/src/io.c b/src/io.c
+index dd74dba..81abba9 100644
+--- a/src/io.c
++++ b/src/io.c
+@@ -140,7 +140,7 @@ static void system_latch(uint32_t a) {
+ 
+ void io_write8(uint32_t a, uint8_t v) {
+     switch (a & 0xFE0000) {
+-    case 0x300000: break;                            /* watchdog kick */
++    case 0x300000: if (a & 1) ng_watchdog_kick(); break;  /* watchdog kick ($300001, mirrored) */
+     case 0x320000: if (!(a & 1)) audio_command(v); break;
+     case 0x380000:
+         if ((a & 0x7F) == 0x51) rtc_write(v);        /* other latches: LEDs, coin counters */
+diff --git a/src/neogeo.c b/src/neogeo.c
+index 3d16236..3826f94 100644
+--- a/src/neogeo.c
++++ b/src/neogeo.c
+@@ -158,12 +158,38 @@ static void script_input(long frame, ng_input_t *in) {
+ 
+ /* ---- frame loop ---- */
+ 
++/* The MVS watchdog resets the board 3,244,030 master clocks (24 MHz) after
++ * the last kick, i.e. 1,622,015 68000 clocks.  Several games use it as a
++ * protection check: if a "sit in a loop" reset does not happen, they write
++ * a failure flag to backup RAM.  Kicks arrive as writes to $300001. */
++#define NG_WATCHDOG_CLOCKS 1622015
++
++static int64_t s_watchdog_deadline;
++
++void ng_watchdog_kick(void) { s_watchdog_deadline = ng_cycles + NG_WATCHDOG_CLOCKS; }
++
++static void watchdog_reset(void) {
++    /* A board reset: the 68k restarts from the BIOS vectors, the video and
++     * audio chips re-initialise, but work and backup RAM keep their data. */
++    ng_irq_pending = 4;
++    bus_reset();
++    lspc_reset();
++    pal_select_bank(0);
++    video_set_fix_bios(1);
++    audio_select_bios_rom(1);
++    audio_reset();
++    exec_reset();
++    ng_watchdog_kick();
++}
++
+ static void run_until(int64_t t) {
+     while (ng_cycles < t) {
+         int64_t target = t, d = lspc_timer_deadline();
+         if (d < target) target = d;
++        if (s_watchdog_deadline < target) target = s_watchdog_deadline;
+         if (target > ng_cycles) exec_run(target);
+         if (ng_cycles >= lspc_timer_deadline()) lspc_timer_fire();
++        if (ng_cycles >= s_watchdog_deadline) watchdog_reset();
+     }
+ }
+ 
+@@ -195,6 +221,7 @@ static void power_on(void) {
+     audio_reset();
+     exec_reset();
+     ng_irq_pending = 4;        /* IRQ3 is asserted at power-on until the BIOS acks it */
++    ng_watchdog_kick();
+ }
+ 
+ int ng_main(int argc, char **argv, const ng_game_t *game,
+@@ -233,7 +260,7 @@ int ng_main(int argc, char **argv, const ng_game_t *game,
+     ng_board_t board = {prom, game->prom_size, bios, 1};
+     bus_init(&board);
+     io_reset(1);
+-    video_load(crom, game->crom_size, srom, srom_sz, sfix, lo);
++    video_load(crom, game->crom_size, srom, srom_sz, sfix, lo, game->fix_bank_type);
+     free(crom);
+     audio_init(m1, m1_sz, sm1, vroms, vsizes, nv);
+     exec_init(funcs, nfuncs, o.interp || nfuncs == 0);
+diff --git a/src/ng_internal.h b/src/ng_internal.h
+index 7031a9e..2546f5a 100644
+--- a/src/ng_internal.h
++++ b/src/ng_internal.h
+@@ -54,11 +54,14 @@ void     pal_select_bank(int bank);
+ 
+ /* ---- renderer (video.c) ---- */
+ int  video_load(const uint8_t *crom, size_t crom_size, const uint8_t *srom, size_t srom_size,
+-                const uint8_t *sfix, const uint8_t *zoom_rom);
++                const uint8_t *sfix, const uint8_t *zoom_rom, int fix_bank_type);
+ void video_set_fix_bios(int bios);       /* 1 = BIOS SFIX, 0 = cart S ROM */
+ void video_render_line(int line, uint32_t *row);   /* line 0..223 */
+ void video_shutdown(void);
+ 
++/* ---- MVS watchdog (neogeo.c) ---- */
++void ng_watchdog_kick(void);             /* write to $300001 */
++
+ /* ---- I/O ports, system latch, RTC (io.c) ---- */
+ void    io_reset(int mvs);
+ uint8_t io_read8(uint32_t addr);
+diff --git a/src/video.c b/src/video.c
+index 8896d12..f5f16e7 100644
+--- a/src/video.c
++++ b/src/video.c
+@@ -29,6 +29,8 @@ static uint32_t s_spr_tiles_mask;
+ static uint8_t *s_fix_cart, *s_fix_bios;
+ static size_t   s_fix_cart_tiles;
+ static int      s_fix_use_bios = 1;
++static int      s_fix_bank_type;
++static int      s_fix_banked;   /* S ROM too big for 12-bit codes */
+ static uint8_t  s_zoom_rom[0x10000];
+ 
+ /* Which of a tile's 16 pixels survive horizontal shrink value n (n+1 of them). */
+@@ -118,11 +120,15 @@ static uint8_t *decode_fix(const uint8_t *rom, size_t size) {
+ }
+ 
+ int video_load(const uint8_t *crom, size_t crom_size, const uint8_t *srom, size_t srom_size,
+-               const uint8_t *sfix, const uint8_t *zoom_rom) {
++               const uint8_t *sfix, const uint8_t *zoom_rom, int fix_bank_type) {
+     decode_sprites(crom, crom_size);
+     s_fix_cart = decode_fix(srom, srom_size);
+     s_fix_cart_tiles = srom_size / 32;
+     s_fix_bios = decode_fix(sfix, 0x20000);
++    /* Only carts with more than the 128 KB the tile code can address use the
++     * extra VRAM bank bits; small carts keep the plain 12-bit path. */
++    s_fix_bank_type = fix_bank_type;
++    s_fix_banked = fix_bank_type != NG_FIX_BANK_NONE && srom_size > 0x20000;
+     memcpy(s_zoom_rom, zoom_rom, sizeof(s_zoom_rom));
+     for (int b = 0; b < 2; b++)
+         for (int i = 0; i < 0x1000; i++) s_pens[b][i] = color_to_argb(0);
+@@ -210,6 +216,19 @@ static void draw_fix(int scanline, uint32_t *row) {
+     for (int col = 0; col < 40; col++) {
+         uint16_t e = lspc_vram[0x7000 + (col << 5) + map_row];
+         uint32_t code = e & 0x0FFF;
++        if (s_fix_banked && !s_fix_use_bios) {
++            /* Late carts bank the fixed layer: the top tile-code bits come
++             * from a VRAM block instead of the map entry.  See MAME
++             * neogeo_spr.cpp, draw_fixed_layer(). */
++            switch (s_fix_bank_type) {
++            case NG_FIX_BANK_KOF2000: {
++                /* Six columns per 16-bit word, inverted. */
++                uint16_t bank = lspc_vram[0x7500 + ((map_row - 1) & 31) + 32 * (col / 6)];
++                code += 0x1000u * (((bank >> ((5 - (col % 6)) * 2)) & 3) ^ 3);
++                break;
++            }
++            }
++        }
+         if (code >= tiles) continue;
+         const uint8_t *px = gfx + code * 64 + y * 8;
+         const uint32_t *pal = pens + ((e >> 12) << 4);
