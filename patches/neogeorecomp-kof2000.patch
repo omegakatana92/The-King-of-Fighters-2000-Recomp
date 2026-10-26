@@ -71,7 +71,7 @@ index 1ec5485..1be02ae 100644
  
  /* Controller state for one frame. Bits are active-high here; io.c inverts. */
 diff --git a/src/audio.c b/src/audio.c
-index ad2d90d..71340f0 100644
+index ad2d90d..ede8c31 100644
 --- a/src/audio.c
 +++ b/src/audio.c
 @@ -126,11 +126,16 @@ static uint8_t z_read(void *u, uint16_t a) {
@@ -80,7 +80,7 @@ index ad2d90d..71340f0 100644
      if (a >= 0xF800) return s_ram[a & 0x7FF];
 +    /* MAME's init_audio(): bank entry b lives at
 +     * 0x10000 + ((b << (11 + window)) & ((size - 0x10000 - 1) & 0x3FFFF)).
-+     * The 0x10000 base skips the fixed 64 KB at the bottom of the M1. */
++     * The 0x10000 base skips the fixed 64 KB at the bottom of the M ROM. */
 +    static const uint32_t win_mask[4] = {0x7FF, 0xFFF, 0x1FFF, 0x3FFF};
 +    uint32_t reg_mask = size > 0x10000 ? ((uint32_t)(size - 0x10000 - 1) & 0x3FFFF) : 0;
      uint32_t off;
