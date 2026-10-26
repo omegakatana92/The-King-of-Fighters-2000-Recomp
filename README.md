@@ -72,9 +72,8 @@ the toolkit, not as title-specific hacks:
   KOF2000 layout, where the top two code bits come from VRAM at `$7500`; carts
   with a 128 KB S ROM keep the plain path.
 
-Both changes, plus the Z80 M-ROM bank base correction, are in
-`patches/neogeorecomp-kof2000.patch` and are applied to the pinned toolkit
-submodule by `setup.sh`.
+Both changes are in `patches/neogeorecomp-kof2000.patch` and are applied to the
+pinned toolkit submodule by `setup.sh`.
 
 ## Requirements
 
