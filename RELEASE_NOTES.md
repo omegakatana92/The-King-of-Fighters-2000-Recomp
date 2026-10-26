@@ -26,7 +26,7 @@ The changes are in `patches/neogeorecomp-kof2000.patch` and are applied to the p
 
 ## Known issue
 
-- **Stage/match audio is silent.** Boot, title and character-select audio play, but when a match starts the M1 driver stops programming its ADPCM/FM channels (pan, level and sample registers are cleared). The CMC50 M1 data is byte-exact, the Z80 bank base matches MAME, and forced key-ons prove the YM2610/V-ROM path works; the remaining fault is in the driver's command/sequence state. Visuals and gameplay are unaffected.
+- **Stage/match audio is silent.** Boot, title and character-select audio play, but when a match starts the M1 driver stops draining its event/command queues and gets stuck in the sequence player (the ADPCM/FM registers are left cleared). The CMC50 M1 data is byte-exact, the Z80 bank base matches MAME, and forced key-ons prove the YM2610/V-ROM path works; the remaining fault is in the driver's command/sequence state. Visuals and gameplay are unaffected.
 
 ## Build
 
